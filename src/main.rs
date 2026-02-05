@@ -1,15 +1,22 @@
 mod telemetry;
-
-use actix_web::{get, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use serde::Deserialize;
 use std::env;
-use tracing::info;
+use tracing::{info, info_span};
 use tracing_actix_web::TracingLogger;
 
+#[derive(Deserialize)]
+struct HelloQuery {
+    user: Option<String>,
+}
+
 #[get("/")]
-#[tracing::instrument]
-async fn hello() -> impl Responder {
-    tracing::info!("Hello endpoint called");
-    HttpResponse::Ok().body("Hello, World!")
+#[tracing::instrument(skip(query), fields(user))]
+async fn hello(query: web::Query<HelloQuery>) -> impl Responder {
+    let user = query.user.as_deref().unwrap_or("anonymous");
+    tracing::Span::current().record("user", user);
+    info!(user = user, "Hello endpoint called");
+    HttpResponse::Ok().body(format!("Hello, {}!", user))
 }
 
 #[get("/health")]
@@ -19,9 +26,6 @@ async fn health() -> impl Responder {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    info!(
-        "Starting"
-    );
     telemetry::init().await;
 
     let port: u16 = env::var("PORT")
@@ -29,7 +33,7 @@ async fn main() -> std::io::Result<()> {
         .parse()
         .expect("PORT must be a number");
 
-    tracing::info!("Starting server on port {}", port);
+    info!("Starting server on port {}", port);
 
     HttpServer::new(|| {
         App::new()

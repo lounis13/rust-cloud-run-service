@@ -1,9 +1,11 @@
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
-use opentelemetry_sdk::{runtime::Tokio, Resource};
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_VERSION};
 use std::env;
+use std::fmt::Debug;
 use tonic::metadata::MetadataValue;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -14,11 +16,7 @@ pub async fn init() {
     let is_gcp = otlp_endpoint.contains("googleapis.com");
     let project_id = env::var("GOOGLE_CLOUD_PROJECT").unwrap_or_default();
 
-    let mut builder = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(&otlp_endpoint);
-
-    if is_gcp {
+    let exporter = if is_gcp {
         let provider = gcp_auth::provider()
             .await
             .expect("Failed to create auth provider");
@@ -38,18 +36,32 @@ pub async fn init() {
                 MetadataValue::try_from(&project_id).unwrap(),
             );
         }
-        builder = builder.with_metadata(metadata);
-    }
 
-    let exporter = builder.build().expect("Failed to create OTLP exporter");
+        let tls_config = tonic::transport::ClientTlsConfig::new().with_native_roots();
 
-    let resource = Resource::new(vec![
-        KeyValue::new(SERVICE_NAME, "rust-cloud-run-service"),
-        KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
-    ]);
+        opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(&otlp_endpoint)
+            .with_metadata(metadata)
+            .with_tls_config(tls_config)
+            .build()
+            .expect("Failed to create OTLP exporter")
+    } else {
+        opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(&otlp_endpoint)
+            .build()
+            .expect("Failed to create OTLP exporter")
+    };
 
-    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
-        .with_batch_exporter(exporter, Tokio)
+    let resource = Resource::builder()
+        .with_attribute(KeyValue::new(SERVICE_NAME, "rust-cloud-run-service"))
+        .with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
+        .with_attribute(KeyValue::new("gcp.project_id", project_id.clone()))
+        .build();
+
+    let provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
         .with_resource(resource)
         .build();
 
@@ -57,10 +69,18 @@ pub async fn init() {
     opentelemetry::global::set_tracer_provider(provider);
 
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+ 
+    // JSON format for GCP Cloud Logging (severity field is recognized)
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_ansi(false)
+        .flatten_event(true)
+        .with_current_span(true)
+        .with_target(true);
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(telemetry)
-        .with(tracing_subscriber::fmt::layer())
+        .with(fmt_layer)
         .init();
 }
