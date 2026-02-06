@@ -2,7 +2,7 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 
 use crate::telemetry::config::{TelemetryBackend, TelemetryConfig};
 use crate::telemetry::error::TelemetryError;
-use crate::telemetry::trace::init_subscriber;
+use crate::telemetry::trace::{init_subscriber, TelemetryGuard};
 
 /// Trait for telemetry providers (GCP, local, etc.)
 pub trait TelemetryProvider: Send + Sync {
@@ -14,32 +14,37 @@ pub trait TelemetryProvider: Send + Sync {
 }
 
 /// Initialize telemetry with a specific provider
+/// Returns a guard that MUST be kept alive for the application lifetime
 pub async fn init_with_provider<P: TelemetryProvider>(
     provider: &P,
     config: &TelemetryConfig,
-) -> Result<(), TelemetryError> {
+) -> Result<TelemetryGuard, TelemetryError> {
     let tracer_provider = provider.build_tracer_provider(config).await?;
-    init_subscriber(tracer_provider, config);
-    Ok(())
+    let guard = init_subscriber(tracer_provider, config);
+    Ok(guard)
 }
 
 /// Initialize telemetry with config (uses backend from config)
-pub async fn init_with_config(config: &TelemetryConfig) -> Result<(), TelemetryError> {
+/// Returns a guard that MUST be kept alive for the application lifetime
+pub async fn init_with_config(config: &TelemetryConfig) -> Result<TelemetryGuard, TelemetryError> {
     match &config.backend {
         TelemetryBackend::Local => {
+            eprintln!("📍 Using Local telemetry backend");
             let provider = crate::telemetry::default::DefaultProvider;
             init_with_provider(&provider, config).await
         }
         #[cfg(feature = "telemetry-gcp")]
         TelemetryBackend::Gcp(gcp_config) => {
+            eprintln!("📍 Using GCP telemetry backend (project: {}, endpoint: {})", gcp_config.project_id, gcp_config.endpoint);
             let provider = crate::telemetry::gcp::GcpProvider::new(gcp_config.clone());
             init_with_provider(&provider, config).await
         }
     }
 }
 
-/// Initialize telemetry from environment (Local backend)
-pub async fn init() -> Result<(), TelemetryError> {
+/// Initialize telemetry from environment
+/// Returns a guard that MUST be kept alive for the application lifetime
+pub async fn init() -> Result<TelemetryGuard, TelemetryError> {
     let config = TelemetryConfig::from_env();
     init_with_config(&config).await
 }

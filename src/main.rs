@@ -27,7 +27,8 @@ async fn health() -> impl Responder {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     // Initialize telemetry (auto-detects GCP from GOOGLE_CLOUD_PROJECT env var)
-    telemetry::init()
+    // IMPORTANT: Keep the guard alive for the entire application lifetime
+    let _telemetry_guard = telemetry::init()
         .await
         .expect("Failed to initialize telemetry");
 
@@ -38,13 +39,25 @@ async fn main() -> std::io::Result<()> {
 
     info!("Starting server on port {}", port);
 
-    HttpServer::new(|| {
+    let server = HttpServer::new(|| {
         App::new()
             .wrap(TracingLogger::default())
             .service(hello)
             .service(health)
     })
     .bind(("0.0.0.0", port))?
-    .run()
-    .await
+    .run();
+
+    // Wait for server to finish
+    server.await?;
+
+    // Explicitly drop the guard to ensure proper shutdown
+    // This gives time to flush remaining spans before process exits
+    info!("Server stopped, shutting down telemetry...");
+    drop(_telemetry_guard);
+
+    // Give a brief moment for async shutdown to complete
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    Ok(())
 }

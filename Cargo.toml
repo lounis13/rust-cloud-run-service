@@ -14,7 +14,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = "0.4"
 tracing-actix-web = { version = "0.7", features = ["opentelemetry_0_31"] }
 opentelemetry = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
@@ -22,6 +21,7 @@ opentelemetry-semantic-conventions = { version = "0.31.0", features = ["semconv_
 opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic", "tls", "tls-roots"] }
 tracing-opentelemetry = { version = "0.32.1" }
 tonic = "0.14"
+thiserror = "2"
 
 # Optional: GCP support
 gcp_auth = { version = "0.12", optional = true }

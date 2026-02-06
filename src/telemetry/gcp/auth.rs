@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tonic::metadata::MetadataValue;
 use tonic::service::Interceptor;
@@ -15,10 +16,14 @@ const TRACE_SCOPE: &str = "https://www.googleapis.com/auth/trace.append";
 /// - "TokenProvider handles caching tokens for their lifetime"
 /// - "Will not make a request if an appropriate token is already cached"
 /// - "The caller should not cache tokens"
+///
+/// Uses a dedicated tokio runtime since the Interceptor is called from
+/// the BatchSpanProcessor thread which is not a tokio runtime thread.
 #[derive(Clone)]
 pub struct GcpAuthInterceptor {
     provider: Arc<Mutex<Arc<dyn gcp_auth::TokenProvider>>>,
     project_id: String,
+    runtime: Arc<Runtime>,
 }
 
 impl GcpAuthInterceptor {
@@ -28,24 +33,29 @@ impl GcpAuthInterceptor {
             .await
             .map_err(|e| TelemetryError::Auth(format!("Failed to create auth provider: {}", e)))?;
 
+        // Create a dedicated runtime for this interceptor
+        let runtime = Runtime::new()
+            .map_err(|e| TelemetryError::Init(format!("Failed to create tokio runtime: {}", e)))?;
+
         Ok(Self {
             provider: Arc::new(Mutex::new(provider)),
             project_id,
+            runtime: Arc::new(runtime),
         })
     }
 }
 
 impl Interceptor for GcpAuthInterceptor {
     fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
-        // Get token - gcp_auth handles caching and automatic refresh
-        let token = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.provider
-                    .lock()
-                    .await
-                    .token(&[TRACE_SCOPE])
-                    .await
-            })
+        // Get token using the dedicated runtime
+        // gcp_auth handles caching and automatic refresh
+        let provider = self.provider.clone();
+        let token = self.runtime.block_on(async {
+            provider
+                .lock()
+                .await
+                .token(&[TRACE_SCOPE])
+                .await
         })
         .map_err(|e| Status::unauthenticated(format!("Failed to get token: {}", e)))?;
 

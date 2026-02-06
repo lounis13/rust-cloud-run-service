@@ -1,5 +1,5 @@
 use opentelemetry_otlp::{SpanExporter, WithExportConfig, WithTonicConfig};
-
+use tracing::info;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::gcp::auth::GcpAuthInterceptor;
 
@@ -8,11 +8,11 @@ pub async fn build_gcp_exporter(
     project_id: &str,
     endpoint: &str,
 ) -> Result<SpanExporter, TelemetryError> {
-    // Create auth interceptor with automatic token refresh
     let auth_interceptor = GcpAuthInterceptor::from_adc(project_id.to_string()).await?;
 
     let tls_config = tonic::transport::ClientTlsConfig::new().with_native_roots();
 
+    info!("📤 Building OTLP exporter with TLS...");
     let exporter = SpanExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)
@@ -21,5 +21,6 @@ pub async fn build_gcp_exporter(
         .build()
         .map_err(|e| TelemetryError::Exporter(e.to_string()))?;
 
+    info!("✅ GCP exporter built successfully");
     Ok(exporter)
 }
