@@ -2,7 +2,7 @@ mod telemetry;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use serde::Deserialize;
 use std::env;
-use tracing::{info, info_span};
+use tracing::info;
 use tracing_actix_web::TracingLogger;
 
 #[derive(Deserialize)]
@@ -26,7 +26,10 @@ async fn health() -> impl Responder {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    telemetry::init().await;
+    // Initialize telemetry (auto-detects GCP from GOOGLE_CLOUD_PROJECT env var)
+    telemetry::init()
+        .await
+        .expect("Failed to initialize telemetry");
 
     let port: u16 = env::var("PORT")
         .unwrap_or_else(|_| "8080".to_string())
